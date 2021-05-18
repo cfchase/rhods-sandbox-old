@@ -1,0 +1,202 @@
+kind: Template
+apiVersion: v1
+metadata:
+  name: user-notebook
+parameters:
+  - name: USERNAME
+    value: 'user0001'
+    required: true
+objects:
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: jupyterhub-singleuser-profile-${USERNAME}
+      labels:
+        app: jupyterhub
+      namespace: redhat-ods-applications
+    data:
+      profile: |
+        gpu: 0
+        last_selected_image: tensorflow-gpu:py3.8-cuda-11.0.3
+        last_selected_size: Small
+  - apiVersion: v1
+    kind: Secret
+    metadata:
+      name: jupyterhub-singleuser-profile-${USERNAME}-envs
+      labels:
+        app: jupyterhub
+      namespace: redhat-ods-applications
+    type: Opaque
+    data:
+      AWS_ACCESS_KEY_ID: ZmFrZSBzZWNyZXQgdmFsdWUK
+      AWS_SECRET_ACCESS_KEY: ZmFrZSBzZWNyZXQgdmFsdWUK
+  - apiVersion: v1
+    kind: PersistentVolume
+    metadata:
+      annotations:
+        kubernetes.io/createdby: aws-ebs-dynamic-provisioner
+        pv.kubernetes.io/bound-by-controller: "yes"
+        pv.kubernetes.io/provisioned-by: kubernetes.io/aws-ebs
+#      labels:
+#        failure-domain.beta.kubernetes.io/region: us-east-1
+#        failure-domain.beta.kubernetes.io/zone: us-east-1a
+      name: jupyterhub-nb-${USERNAME}-pv
+    spec:
+      accessModes:
+        - ReadWriteOnce
+#      awsElasticBlockStore:
+#        fsType: ext4
+#        volumeID: aws://us-east-1a/vol-0ff2a284fc75b3bda
+      capacity:
+        storage: 2Gi
+      claimRef:
+        apiVersion: v1
+        kind: PersistentVolumeClaim
+        name: jupyterhub-nb-${USERNAME}-pvc
+        namespace: redhat-ods-applications
+      persistentVolumeReclaimPolicy: Delete
+      storageClassName: gp2
+      volumeMode: Filesystem
+  - apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      annotations:
+        hub.jupyter.org/username: ${ USERNAME }
+        pv.kubernetes.io/bind-completed: "yes"
+        pv.kubernetes.io/bound-by-controller: "yes"
+#        volume.beta.kubernetes.io/storage-provisioner: kubernetes.io/aws-ebs
+#        volume.kubernetes.io/selected-node: ip-10-0-164-114.ec2.internal
+      labels:
+        app: jupyterhub
+        component: singleuser-storage
+      name: jupyterhub-nb-${USERNAME}-pvc
+      namespace: redhat-ods-applications
+    spec:
+      accessModes:
+        - ReadWriteOnce
+      resources:
+        requests:
+          storage: 2Gi
+      storageClassName: gp2
+      volumeMode: Filesystem
+      volumeName: jupyterhub-nb-${USERNAME}-pv
+  - apiVersion: v1
+    kind: Pod
+    metadata:
+      annotations:
+        alpha.image.policy.openshift.io/resolve-names: '*'
+        hub.jupyter.org/username: ${USERNAME}
+        openshift.io/scc: restricted
+      labels:
+        app: jupyterhub
+        component: singleuser-server
+        jupyterhub.opendatahub.io/user: ${USERNAME}
+      name: jupyterhub-nb-${USERNAME}
+      namespace: redhat-ods-applications
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - args:
+            - start-singleuser.sh
+            - --ip=0.0.0.0
+            - --port=8080
+          env:
+            - name: JUPYTERHUB_API_TOKEN
+              value: ab829b2667dc42f0b42c985d7b1c9d6c
+            - name: JPY_API_TOKEN
+              value: ab829b2667dc42f0b42c985d7b1c9d6c
+            - name: JUPYTERHUB_ADMIN_ACCESS
+              value: "1"
+            - name: JUPYTERHUB_CLIENT_ID
+              value: jupyterhub-user-${USERNAME}
+            - name: JUPYTERHUB_HOST
+            - name: JUPYTERHUB_OAUTH_CALLBACK_URL
+              value: /user/${USERNAME}/oauth_callback
+            - name: JUPYTERHUB_USER
+              value: ${USERNAME}
+            - name: JUPYTERHUB_SERVER_NAME
+            - name: JUPYTERHUB_API_URL
+              value: http://jupyterhub:8081/hub/api
+            - name: JUPYTERHUB_ACTIVITY_URL
+              value: http://jupyterhub:8081/hub/api/users/${USERNAME}/activity
+            - name: JUPYTERHUB_BASE_URL
+              value: /
+            - name: JUPYTERHUB_SERVICE_PREFIX
+              value: /user/${USERNAME}/
+            - name: MEM_LIMIT
+              value: "1073741824"
+            - name: CPU_LIMIT
+              value: "1.0"
+            - name: JUPYTER_IMAGE_SPEC
+              value: tensorflow-gpu:py3.8-cuda-11.0.3
+            - name: JUPYTER_IMAGE
+              value: tensorflow-gpu:py3.8-cuda-11.0.3
+            - name: S3_ENDPOINT_URL
+            - name: MEM_LIMIT
+              value: "8589934592"
+            - name: JUPYTERHUB_USER_NAME
+              value: ${USERNAME}
+          image: image-registry.openshift-image-registry.svc:5000/redhat-ods-applications/tensorflow-gpu@sha256:a7d83121509b3e8a2be51854a9c16298c48ef77bac7a56141579749cb686246a
+          imagePullPolicy: IfNotPresent
+          lifecycle: { }
+          name: notebook
+          ports:
+            - containerPort: 8080
+              name: notebook-port
+              protocol: TCP
+          resources:
+            limits:
+              cpu: "2"
+              memory: 8Gi
+            requests:
+              cpu: "1"
+              memory: 8Gi
+          securityContext:
+            capabilities:
+              drop:
+                - KILL
+                - MKNOD
+                - SETGID
+                - SETUID
+            runAsGroup: 0
+            runAsUser: 1001160000
+          terminationMessagePath: /dev/termination-log
+          terminationMessagePolicy: File
+          volumeMounts:
+            - mountPath: /opt/app-root/src
+              name: data
+      dnsPolicy: ClusterFirst
+      enableServiceLinks: true
+#      imagePullSecrets:
+#        - name: default-dockercfg-cv9kg
+#        - name: addon-managed-odh-pullsecret
+      nodeName: ip-10-0-161-183.ec2.internal
+      preemptionPolicy: PreemptLowerPriority
+      priority: 0
+      restartPolicy: OnFailure
+      schedulerName: default-scheduler
+      securityContext:
+        fsGroup: 1001160000
+        seLinuxOptions:
+          level: s0:c34,c19
+      serviceAccount: default
+      serviceAccountName: default
+      terminationGracePeriodSeconds: 30
+      tolerations:
+        - effect: NoExecute
+          key: node.kubernetes.io/not-ready
+          operator: Exists
+          tolerationSeconds: 300
+        - effect: NoExecute
+          key: node.kubernetes.io/unreachable
+          operator: Exists
+          tolerationSeconds: 300
+        - effect: NoSchedule
+          key: node.kubernetes.io/memory-pressure
+          operator: Exists
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: jupyterhub-nb-${USERNAME}-pvc
+
+
